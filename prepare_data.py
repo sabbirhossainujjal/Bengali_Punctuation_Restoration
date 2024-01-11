@@ -172,3 +172,5 @@ if __name__ == "__main__":
     data= main()
     data.to_parquet("./modified_data.parquet", index= False)
     print(f"Total Processing Time: {(time.time() - start_time)/60 : 0.3f} min")
+    
+    
