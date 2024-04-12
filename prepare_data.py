@@ -150,6 +150,9 @@ def parse_arguments():
     arguments= parser.parse_args()
     return arguments
 
+def remove_all_space(text):
+    return text.replace(" ", "")
+    
 def main():
     args= parse_arguments()
     punctuations= args.punctuations
