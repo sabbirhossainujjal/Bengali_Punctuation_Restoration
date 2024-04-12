@@ -42,6 +42,9 @@ class CustomDataset(Dataset):
         return len(self.df)
     
     def __getitem__(self, index):
+        """
+        df has tokens column in which text is tokenized based on label.
+        """
         text= list(self.df.tokens[index]) #normalization(self.df.sentence[index])
         labels= list(self.df.labels[index])
         inputs= self.tokenizer(text, 
@@ -92,10 +95,10 @@ class Collate:
 
 collate_fn= Collate(tokenizer)
 
-def prepare_loader(df_train, df_valid, tokenizer, cfg):
+def prepare_dataloader(df_train, df_valid, tokenizer=tokenizer, cfg=CONFIG):
 #     df_train= df[df.fold != fold].reset_index(drop= True) # 2 fold out of 3 fold is used as training data, and 1 fold for validation.
 #     df_valid= df[df.fold == fold].reset_index(drop= True)
-    valid_labels = df_valid['labels'].values
+    # valid_labels = df_valid['labels'].values
     
     # converting dataFrame to dataset.
     train_dataset= CustomDataset(df_train, tokenizer, cfg)
@@ -122,7 +125,8 @@ def prepare_loader(df_train, df_valid, tokenizer, cfg):
     return train_loader, valid_loader
 
 if __name__ == "__main__":
-    data= pd.read_parquet("./data.parquet")
-    print("Preparing Data Loader")
-    train_loader, valid_loader= prepare_loader(data, data, tokenizer, CONFIG)
-    # print(train_loader)
+    pass
+    # data= pd.read_parquet("./data.parquet")
+    # print("Preparing Data Loader")
+    # train_loader, valid_loader= prepare_dataloader(data, data, tokenizer, CONFIG)
+    # # print(train_loader)

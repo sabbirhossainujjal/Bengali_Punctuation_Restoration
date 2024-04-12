@@ -1,14 +1,28 @@
 
+import time
 import torch
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
-import random
-import pandas as pd
 from sklearn.metrics import f1_score
-from torch.optim import lr_scheduler
+from torch.optim import lr_scheduler, AdamW
+from collections import defaultdict
+from utils import *
+from helper import get_logger
 from configuration import CONFIG
 CONFIG = CONFIG()
+
+def get_logger(filename='train'):
+    from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
+    logger = getLogger(__name__)
+    logger.setLevel(INFO)
+    handler1 = StreamHandler()
+    handler1.setFormatter(Formatter("%(message)s"))
+    handler2 = FileHandler(filename=f"{filename}.log")
+    handler2.setFormatter(Formatter("%(message)s"))
+    logger.addHandler(handler1)
+    logger.addHandler(handler2)
+    return logger
 
 def compute_metrics(logits, labels):
     predictions = np.argmax(logits.detach().cpu().numpy(), axis=-1)
@@ -45,6 +59,9 @@ def token_loss_fn(logits, labels, attention_mask= None):
     
     return entity_loss
 
+def get_optimizer(parameters, cfg= CONFIG):
+    optimizer= AdamW(params=parameters, lr= cfg.learning_rate, weight_decay= cfg.weight_decay, eps= cfg.eps, betas= cfg.betas)
+    return optimizer
 
 def fetch_scheduler(optimizer):
     if CONFIG.scheduler == "CosineAnnealingLR":
@@ -58,11 +75,9 @@ def fetch_scheduler(optimizer):
 
     return scheduler
 
-
-
 def train_one_epoch(model, dataloader, optimizer, scheduler, epoch, device= CONFIG.device):
+    
     model.train()
-
     dataset_size= 0
     running_loss= 0.0
     score= []
@@ -85,17 +100,17 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, epoch, device= CONF
             loss= loss/ CONFIG.gradient_accumulation_steps
         
         loss.backward()
+        
         ## Gradient Accumulation
-        if (step + 1) % CONFIG.gradient_accumulation_steps == 0 or step == steps:
-            
+        if (step + 1) % CONFIG.gradient_accumulation_steps == 0 or step == steps:            
             optimizer.step() #Performs a single optimization step (parameter update)
-            
-            # clear out the gradients of all Variables 
-            # in this optimizer (i.e. W, b)
-            optimizer.zero_grad()
             
             if scheduler is not None:
                 scheduler.step()
+
+            # clear out the gradients of all Variables 
+            # in this optimizer (i.e. W, b)
+            optimizer.zero_grad()
         
         running_loss += (loss.item() * batch_size)
         dataset_size += batch_size
@@ -120,9 +135,8 @@ def valid_one_epoch(model, dataloader, epoch, device= CONFIG.device):
     accuracy= []
     
     progress_bar= tqdm(enumerate(dataloader), total= len(dataloader))
-    steps= len(dataloader)
     
-    for step, data in progress_bar:
+    for _, data in progress_bar:
         ids= data['input_ids'].to(device, dtype= torch.long)
         masks= data['attention_mask'].to(device, dtype= torch.long)
         targets= data['targets'].to(device, dtype= torch.long)
@@ -153,39 +167,92 @@ def valid_one_epoch(model, dataloader, epoch, device= CONFIG.device):
                                 )
     return epoch_loss, epoch_f1_score, epoch_accuracy  #
 
-def add_punctuation(tokens, predictions, word_ids):
-    result= ''
-    for i, d in enumerate(zip(word_ids, predictions)):
-        word_id, pred= d
-        if i== 0: # for first token
-            previous_word_id= word_id
-            result += tokens[word_id] + CONFIG.id2pun[pred] 
-        else:
-            if word_id== previous_word_id: # if word id matches [label is for same token, so don't do anything]
-                pass
-            else:
-                previous_word_id= word_id
-                result +=' ' +tokens[word_id] + CONFIG.id2pun[pred] 
-    if len(result)>0:
-        result= normalization(result)
-    else:
-        result= '।'
-    return result   
 
-def run_sample_test(epoch, model, tokenizer, config= CONFIG):
-    print(f"############ Running sample test on epoch {epoch} ############")
-    test_df= pd.read_csv('./train.csv')
-    random.seed(config.seed)
-    sentences= random.sample(list(test_df['gt_sentence'].values), k= 5)
-    for text in sentences:
-        orig_sent= text
-        text= preprocessing(text)
-    #     tokens= toenizer.
-        inputs= tokenizer(text, padding=True, truncation=True, is_split_into_words= True, return_tensors="pt")
-        word_ids= inputs.word_ids()[1:-1]
-        outputs= model(inputs['input_ids'].to(config.device), inputs['attention_mask'].to(config.device))
-        outputs= outputs.detach().cpu().numpy().argmax(axis= -1)[0, 1:-1]
-        result= add_punctuation(text, outputs, word_ids)
-        print(f'Input sentence:     {orig_sent}')
-        print(f'Predicted sentence: {result}')
+def training_loop(train_loader, valid_loader, model, optimizer, scheduler, num_epochs= CONFIG.num_epochs, patience= 3):
+    LOGGER = get_logger()
+    print(f'#'*15)
+    print('Training Started')
+    print(f'#'*15)
+    
+    start= time.time()
+    best_loss= np.inf
+    if CONFIG.pretrained:
+        best_score= CONFIG.best_score
+    else:
+        best_score= 0
+    trigger_times= 0
+    history= defaultdict(list)
+    
+    model = model.to(CONFIG.device)
+    for epoch in range(CONFIG.start_epoch, CONFIG.start_epoch + num_epochs + 1):
+        t1= time.time()
+        train_epoch_loss, train_f1_score, train_accuracy= train_one_epoch(model, train_loader, optimizer, scheduler, epoch, CONFIG.device)
+        valid_epoch_loss, valid_f1_score, valid_accuracy = valid_one_epoch(model, valid_loader, epoch, CONFIG.device)
+        
+        history['train_loss'].append(train_epoch_loss)
+        history['valid_loss'].append(valid_epoch_loss)
+        history['train_f1_score'].append(train_f1_score)
+        history['valid_f1_score'].append(valid_f1_score)
+
+        LOGGER.info(f'Epoch {epoch+1} - avg_train_loss: {train_epoch_loss:.4f}  avg_val_loss: {valid_epoch_loss:.4f}  time: {time.time() - t1:.0f}s')
+        LOGGER.info(f'Epoch {epoch+1} - Train F1 Score: {train_f1_score:.4f} - Train Accuracy: {train_accuracy:.4f} - Valid F1 Score: {valid_f1_score:.4f} - Valid Accuracy: {valid_accuracy:.4f}')
+        #####
+        if  valid_accuracy >= best_score: #valid_epoch_loss #best_loss #
+            trigger_times= 0
+            print(f"Vlaidation Accuracy Improved {best_score} ---> {valid_accuracy}") #valid_f1_score
+            best_score= valid_accuracy
+            
+            path= f"best_model.bin"
+            torch.save(model.state_dict(), path)
+            print(f"Model saved to {path}")
+            # run_sample_test(epoch, model, tokenizer, config= CONFIG)
+        else:
+            trigger_times += 1
+            if trigger_times >= patience:
+                print("Early Stoping. \n")
+                break
+                
+    time_elapsed= time.time() - start
+    print('Training complete in {:.0f}h {:.0f}m {:.0f}s'.format(
+        time_elapsed // 3600, (time_elapsed % 3600) // 60, (time_elapsed % 3600) % 60))
+    
+    return history, best_score
+
+
+########################
+# def add_punctuation(tokens, predictions, word_ids):
+#     result= ''
+#     for i, d in enumerate(zip(word_ids, predictions)):
+#         word_id, pred= d
+#         if i== 0: # for first token
+#             previous_word_id= word_id
+#             result += tokens[word_id] + CONFIG.id2pun[pred] 
+#         else:
+#             if word_id== previous_word_id: # if word id matches [label is for same token, so don't do anything]
+#                 pass
+#             else:
+#                 previous_word_id= word_id
+#                 result +=' ' +tokens[word_id] + CONFIG.id2pun[pred] 
+#     if len(result)>0:
+#         result= normalization(result)
+#     else:
+#         result= '।'
+#     return result   
+
+# def run_sample_test(epoch, model, tokenizer, config= CONFIG):
+#     print(f"############ Running sample test on epoch {epoch} ############")
+#     test_df= pd.read_csv('./train.csv')
+#     random.seed(config.seed)
+#     sentences= random.sample(list(test_df['gt_sentence'].values), k= 5)
+#     for text in sentences:
+#         orig_sent= text
+#         text= preprocessing(text)
+#     #     tokens= toenizer.
+#         inputs= tokenizer(text, padding=True, truncation=True, is_split_into_words= True, return_tensors="pt")
+#         word_ids= inputs.word_ids()[1:-1]
+#         outputs= model(inputs['input_ids'].to(config.device), inputs['attention_mask'].to(config.device))
+#         outputs= outputs.detach().cpu().numpy().argmax(axis= -1)[0, 1:-1]
+#         result= add_punctuation(text, outputs, word_ids)
+#         print(f'Input sentence:     {orig_sent}')
+#         print(f'Predicted sentence: {result}')
         

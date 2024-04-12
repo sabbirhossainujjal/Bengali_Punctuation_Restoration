@@ -8,9 +8,9 @@ class CONFIG:
     n_folds= 3
     start_epoch= 18
     num_epochs= 8
-    punctuations= [',', '।', '?'] #[',', '।', '?', '!', '-', ';', ':'] #[',', '।', '?', '!']
-    label_names= ['O', ',', '।', '?'] #['O', 'COMMA', 'DARI', 'QUESTION', 'EXCLAMATION', 'HYPHEN', 'SEMICOLON', 'COLON'] #  #['O', 'COMMA', 'DARI', 'QUESTION', 'EXCLAMATION']
-    num_labels= len(label_names)
+    punctuations= [',', '।', '?', '!', '-', ';', ':'] #[',', '।', '?', '!'] #[',', '।', '?'] #
+    label_names= ['COMMA', 'DARI', 'QUESTION', 'EXCLAMATION', 'HYPHEN', 'SEMICOLON', 'COLON'] #['O', 'COMMA', 'DARI', 'QUESTION', 'EXCLAMATION', 'HYPHEN', 'SEMICOLON', 'COLON'] #  #['O', 'COMMA', 'DARI', 'QUESTION', 'EXCLAMATION'] # ['O', ',', '।', '?'] #
+    num_labels= len(label_names) + 1
     model_name="xlm-roberta-large" #"csebuetnlp/banglabert_large"  #"csebuetnlp/banglabert" # #csebuetnlp/BanglaParaphrase
     max_length= 128
     lstm_size= 512
@@ -38,9 +38,9 @@ class CONFIG:
     id2label= {0: "O"}
     label2id= {"O":0}
     id2pun = {0: ' '}
-    for i, pun in enumerate(punctuations):
-        label2id[pun] = i+1
-        id2label[i+1]= pun
+    for i, (pun, lab) in enumerate(zip(punctuations, label_names)):
+        label2id[lab] = i+1
+        id2label[i+1]= lab
         id2pun[i+1] = pun
 
 

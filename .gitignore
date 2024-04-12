@@ -7,4 +7,9 @@ __pycache__/
 *.bin
 *.parquet
 .gitignore
-
+*.log
+helper.py
+prepare_data.py
+punctuation_model.py
+punctuation_prediction.py
+*.ipynb
