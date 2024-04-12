@@ -4,7 +4,6 @@ from configuration import CONFIG
 CONFIG = CONFIG()
 # from torch.nn.utils.rnn import pack_padded_sequence
 
-
 class TokenClassificationModel(nn.Module):
     def __init__(self, cfg=CONFIG):
         super(TokenClassificationModel, self).__init__()
